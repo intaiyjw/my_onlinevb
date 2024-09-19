@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys, re, time, string
+import sys, re, time, string # 我不需要import string
 import numpy as n
 from scipy.special import gammaln, psi
 
@@ -25,13 +25,18 @@ import corpus
 n.random.seed(100000001)
 meanchangethresh = 0.001
 
+# 这里计算一个或多个充分狄利克雷充分统计量的期望，作为一个函数；
+# 换作我的话，写一个类，分别计算 一个或多个 (狄利克雷)'D','GD','BL' 分布的 充分统计量期望；对数期望；期望；导出分布期望矩阵
 def dirichlet_expectation(alpha):  # 充分统计量的期望
     """
     For a vector theta ~ Dir(alpha), computes E[log(theta)] given alpha.
+    alpha是一个np.ndarray;可以多个alpha构成一个矩阵同时传入
+    返回一个np.ndarray;充分统计量的期望
     """
     if (len(alpha.shape) == 1): # 表示是一个向量，只有一个axis
         return(psi(alpha) - psi(n.sum(alpha)))
     return(psi(alpha) - psi(n.sum(alpha, 1))[:, n.newaxis])  # 这里newaxis实际上是做了转置
+    # n.sum(alpha, 1) 这里1是axis的index；若alpah是一个(n,m)矩阵，则坍缩m维度求和，最后成为一个(n,)矩阵
 
 def parse_doc_list(docs, vocab):
     """
@@ -47,8 +52,7 @@ def parse_doc_list(docs, vocab):
 
     Returns a pair of lists of lists. 
 
-    The first, wordids, says what voc
-    abulary tokens are present in
+    The first, wordids, says what vocabulary tokens are present in
     each document. wordids[i][j] gives the jth unique token present in
     document i. (Don't count on these tokens being in any particular
     order.)
@@ -58,29 +62,33 @@ def parse_doc_list(docs, vocab):
     by wordids[i][j] appears in document i.
     """
     if (type(docs).__name__ == 'str'):  # 如果传入的是单个文件（字符串），则暂时转换为列表
-        temp = list()
+        temp = list()                   # 也就是长度为1的列表；唯一的元素是一个字符串
         temp.append(docs)
         docs = temp
 
-    D = len(docs)  # 于是docs一定是一个列表
-    
-    wordids = list()  # 
+    D = len(docs)  # 于是docs一定是一个列表，D为列表的长度（文章的数量）
+        
+    wordids = list()  # wordids是一个列表，列表中每一个元素是 一个字典取出的keys集合，是一种特殊的类型  
     wordcts = list()
     for d in range(0, D):  # docs[d]是一个字符串
+
         docs[d] = docs[d].lower()  # docs[d]全部变为小写
-        docs[d] = re.sub(r'-', ' ', docs[d])
-        docs[d] = re.sub(r'[^a-z ]', '', docs[d])
-        docs[d] = re.sub(r' +', ' ', docs[d])
+        docs[d] = re.sub(r'-', ' ', docs[d])  # 将所有'-'替换为' '
+        docs[d] = re.sub(r'[^a-z ]', '', docs[d])  # 将字符串docs[d]中所有除了a-z和空格的字符删除;^表示negate;[]表示字符集合
+        docs[d] = re.sub(r' +', ' ', docs[d])  # 将多个空格压缩为一个空格，+表示one or more
         words = string.split(docs[d])  # 拆 字符串 为 单词列表
+
         ddict = dict()  # 这个文件的单词-计数mapping字典
         for word in words:  # 填充这个字典
             if (word in vocab):  #  如果这个单词在vocab中，vocab为一个字典
-                wordtoken = vocab[word]  # 查找这个单词在vocab中对应的整数值
-                if (not wordtoken in ddict):  # 如果此文件单词-计数尚未收录
-                    ddict[wordtoken] = 0  # 则添加该整数值作为key，并初始化value为0
+                wordtoken = vocab[word]  # 查找这个单词在vocab中对应的index值
+                if (not wordtoken in ddict):  # 如果此文件单词-计数字典尚未收录该单词index值
+                    ddict[wordtoken] = 0  # 则添加该index值作为key，并初始化value为0
                 ddict[wordtoken] += 1
-        wordids.append(ddict.keys())  # python3中字典的keys()方法返回的是一个view，需list()强制转换
-        wordcts.append(ddict.values())
+
+        wordids.append(ddict.keys())  # python3中字典的keys()方法返回的是一个view，需list()强制转换?
+        wordcts.append(ddict.values())  # 因此这里分别是dict_keys和dict_values类型
+                                        # python内置的sum函数可以直接计算keys和values集合内元素之和
 
     return((wordids, wordcts))
 
@@ -99,20 +107,22 @@ class OnlineLDA:
            this is the size of the corpus. In the truly online setting, this
            can be an estimate of the maximum number of documents that
            could ever be seen.
-        alpha: Hyperparameter for prior on weight vectors theta
-        eta: Hyperparameter for prior on topics beta (分别对应我的beta, phi)
+        alpha: Hyperparameter for prior on weight vectors theta 文章主题dirichlet分布参数
+        eta: Hyperparameter for prior on topics beta (分别对应我的beta, phi) 主题单词dirichlet分布参数
+        *********************
         tau0: A (positive) learning parameter that downweights early iterations
         kappa: Learning rate: exponential decay rate---should be between
              (0.5, 1.0] to guarantee asymptotic(渐进的) convergence.
-
+        *********************
         Note that if you pass the same set of D documents in every time and
         set kappa=0 this class can also be used to do batch VB.
+        传统VB:设置D为固定的一个数,kappa=0
         """
-        self._vocab = dict()
-        for word in vocab:  # vocab是 单词-整数 字典
+        self._vocab = dict()  # python中下划线的作用？内部的 单词-index 字典
+        for word in vocab:  # vocab是 单词集合
             word = word.lower()
             word = re.sub(r'[^a-z]', '', word)
-            self._vocab[word] = len(self._vocab)
+            self._vocab[word] = len(self._vocab)  # 从0开始
 
         self._K = K
         self._W = len(self._vocab)  # 相当于我的 V
@@ -128,12 +138,14 @@ class OnlineLDA:
         # Initialize the variational distribution q(beta|lambda)
         # np.random.gamma(k, theta, size): Gamma分布；连续发生k次事件总共的时间
         # k事件发生次数，theta表示间隔时间的某种平均值；1/theta表示单位时间内时间发生的概率
-        # 为什么要用gamma分布初始化主题-单词 先验分布的 参数？
-        # 每个主题的单词分布的参数都有gamma分布随机生成，然后计算充分统计量期望？
-        self._lambda = 1*n.random.gamma(100., 1./100., (self._K, self._W))
-        self._Elogbeta = dirichlet_expectation(self._lambda)
-        self._expElogbeta = n.exp(self._Elogbeta)
+        # 为什么要用gamma分布初始化 主题-单词 先验分布的 参数？
+        # 每个主题的单词分布的参数都由gamma分布随机生成，然后计算充分统计量期望？
+        # beta(varphi)相关的变量 是 模型参数，在M-step更新优化，用于最大化logP(w),从而learning模型参数
+        self._lambda = 1*n.random.gamma(100., 1./100., (self._K, self._W))  # K个主题的单词狄利克雷分布参数构成的K*W矩阵
+        self._Elogbeta = dirichlet_expectation(self._lambda)  # K*W矩阵，每个主题的每个充分统计量的期望
+        self._expElogbeta = n.exp(self._Elogbeta)  # 求指数
 
+    # e-step, inference, 优化变分分布参数，最小化KL
     def do_e_step(self, wordids, wordcts):
         batchD = len(wordids) # 文章数量
 
@@ -143,22 +155,32 @@ class OnlineLDA:
         Elogtheta = dirichlet_expectation(gamma)
         expElogtheta = n.exp(Elogtheta)
 
-        sstats = n.zeros(self._lambda.shape) # (_lambda.shape:主题数量*单词数量)
+        sstats = n.zeros(self._lambda.shape) # (_lambda.shape:主题数量*单词数量)???
         # Now, for each document d update that document's gamma and phi
         it = 0
-        meanchange = 0
+        meanchange = 0  # 
         for d in range(0, batchD):
-            print sum(wordcts[d])
-            # These are mostly just shorthand (but might help cache locality)
-            ids = wordids[d]
-            cts = wordcts[d]
+            print sum(wordcts[d])  # 一篇文章的单词总数 print(sum(wordcts[d]))
+            # These are mostly just shorthand (but might help cache locality) 确实，这里新赋一个变量就像创建了一个快捷方式
+
+            ids = wordids[d]  # 这篇文章的单词id. 这里ids是一个集合数据类型，是'dict_keys'
+            cts = wordcts[d]  # 这篇文章的单词计数. 这里cts是一个集合数据类型，是'dict_values'
+
             gammad = gamma[d, :]  # 文章-主题分布参数的初值
             Elogthetad = Elogtheta[d, :]  # 上面参数Dir分布的充分统计量期望
-            expElogthetad = expElogtheta[d, :]
-            expElogbetad = self._expElogbeta[:, ids]
+            expElogthetad = expElogtheta[d, :]  # (K,)-dimensional array
+            expElogbetad = self._expElogbeta[:, ids]  # (K, V_m)-dimensional array; V_m,也就是len(ids) 
+                                                      # 这里用wordid 将主题-单词矩阵中 这篇文章出现了的单词 对应的下标 筛选了出来
+                                                      # 对于一篇文章，只能对其中出现过的单词的 背后的 主题的 条件概率 进行估计
+                                                      # python3中，ids是字典的view，需要强制转换成list才能作为array的下标
+                                                      # expElogbetad = self._expElogbeta[:, list(ids)]
+
             # The optimal phi_{dwk} is proportional to 
             # expElogthetad_k * expElogbetad_w. phinorm is the normalizer.
-            phinorm = n.dot(expElogthetad, expElogbetad) + 1e-100
+            phinorm = n.dot(expElogthetad, expElogbetad) + 1e-100  # expElogthetad is (K,)-dimensional array
+                                                                   # expElogbetad is (K, V_m)-dimensional array
+                                                                   # the inner product returns a (V_m,)-dimensional array
+
             # Iterate between gamma and phi until convergence
             for it in range(0, 100):
                 lastgamma = gammad
@@ -166,7 +188,7 @@ class OnlineLDA:
                 # Substituting the value of the optimal phi back into
                 # the update for gamma gives this update. Cf. Lee&Seung 2001.
                 gammad = self._alpha + expElogthetad * \
-                    n.dot(cts / phinorm, expElogbetad.T)
+                    n.dot(cts / phinorm, expElogbetad.T)  # .T 表示转置
                 print gammad[:, n.newaxis]
                 Elogthetad = dirichlet_expectation(gammad)
                 expElogthetad = n.exp(Elogthetad)
@@ -264,6 +286,7 @@ class OnlineLDA:
 
 #         return((gamma, sstats))
 
+    # m-step, leanring, 优化模型参数，最大化logP(w)
     def update_lambda_docs(self, docs):
         """
         First does an E step on the mini-batch given in wordids and
